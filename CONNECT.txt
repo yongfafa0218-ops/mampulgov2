@@ -1,0 +1,17 @@
+# Add-ons only (for your originals)
+
+배포는 네 원본 파일을 그대로 쓰고, 아래 **추가 파일만** 덮어쓰기/추가하세요.
+
+## 포함 파일
+- robots.txt  — Sitemap 위치 명시
+- sitemap.xml — XML 순수 본문
+- status.html — 브라우저에서 빠른 상태 점검
+- .github/workflows/seo-agent.yml — 푸시/매일 자동 점검→(옵션) 재배포→Google ping
+
+## GitHub Secrets (Settings → Secrets and variables → Actions)
+- SITE_BASE = https://mampulgo.vercel.app
+- SITEMAP_PATH = /sitemap.xml  (gz 쓰면 /sitemap.xml.gz)
+- DEPLOY_HOOK_URL = (Vercel/Netlify Deploy Hook, 선택)
+- SLACK_WEBHOOK_URL = (선택)
+
+업로드 후 Vercel은 자동 배포됩니다.

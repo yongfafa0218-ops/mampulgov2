@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>맘풀고 자동화 상태</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial; background:#0b0c10; color:#e5e7eb; margin:0}
+    main{max-width:880px;margin:40px auto;padding:0 16px}
+    h1{margin:0 0 16px 0}
+    .card{background:#111318;border:1px solid #1f2937;border-radius:16px;padding:16px;margin:12px 0}
+    .ok{color:#22c55e}.warn{color:#fbbf24}.bad{color:#ef4444}
+    code{background:#0b0c10;padding:2px 6px;border-radius:6px}
+    a{color:#60a5fa;text-decoration:none}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>맘풀고 자동화 상태</h1>
+    <div class="card">
+      <p><code>/sitemap.xml</code> 상태 / Content-Type / 스크립트 주입 유무를 브라우저에서 빠르게 점검합니다.
+      (정식 점검/재배포/핑은 GitHub Actions가 수행)</p>
+    </div>
+    <div class="card" id="result">점검 중…</div>
+    <div class="card">
+      <h3>빠른 링크</h3>
+      <ul>
+        <li><a href="/sitemap.xml" target="_blank">sitemap.xml</a></li>
+        <li><a href="/robots.txt" target="_blank">robots.txt</a></li>
+        <li><a href="https://www.google.com/ping?sitemap=" id="ping" target="_blank">Google ping</a></li>
+      </ul>
+    </div>
+    <script>
+      (async () => {
+        const site = location.origin + "/sitemap.xml";
+        document.getElementById("ping").href = "https://www.google.com/ping?sitemap=" + encodeURIComponent(site);
+        const res = await fetch(site, {cache:"no-store"});
+        const ct = (res.headers.get("content-type") || "").toLowerCase();
+        let summary = "";
+        if (ct.includes("application/x-gzip")) {
+          summary = "gzip 사이트맵 (본문 검사는 생략)";
+        } else {
+          const text = await res.text();
+          summary = text.toLowerCase().includes("<script") ? "본문에 <script> 발견됨" : "본문에 <script> 없음";
+        }
+        document.getElementById("result").innerHTML =
+          `<p><b>Status</b>: ${res.status} / <b>Content-Type</b>: ${ct}</p>
+           <p><b>본문 검사</b>: ${summary.includes("발견") ? '<span class="bad">문제</span>' : '<span class="ok">정상</span>'}</p>`;
+      })().catch(e => {
+        document.getElementById("result").innerHTML = '<p class="bad">에러: ' + (e.message||e) + '</p>';
+      });
+    </script>
+  </main>
+</body>
+</html>

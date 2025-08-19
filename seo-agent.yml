@@ -1,0 +1,74 @@
+name: SEO Agent (check → redeploy → ping)
+
+on:
+  push: { branches: [ main, master ] }
+  schedule: [ { cron: "0 0 * * *" } ]   # daily 00:00 UTC (09:00 KST)
+  workflow_dispatch:
+
+concurrency:
+  group: seo-agent-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+
+jobs:
+  guard:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    env:
+      SITE_BASE: ${{ secrets.SITE_BASE }}
+      SITEMAP_PATH: ${{ secrets.SITEMAP_PATH }}
+      DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Validate secrets and target
+        run: |
+          set -e
+          if [ -z "$SITE_BASE" ]; then
+            echo "❌ Missing SITE_BASE"; exit 1; fi
+          if [ -z "$SITEMAP_PATH" ]; then
+            echo "SITEMAP_PATH=/sitemap.xml" >> $GITHUB_ENV; fi
+          echo "Target: ${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
+
+      - name: Check status & Content-Type
+        run: |
+          set -e
+          URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
+          curl -sSIL "$URL" | tee /tmp/h.txt
+          STATUS=$(awk 'NR==1{print $2}' /tmp/h.txt)
+          CT=$(grep -i '^content-type:' /tmp/h.txt | tr -d '\r' | tr 'A-Z' 'a-z')
+          echo "Status: $STATUS"; echo "Content-Type: $CT"
+          [ "$STATUS" = "200" ] || (echo "❌ Status $STATUS" && exit 2)
+          if echo "$CT" | grep -q "application/x-gzip"; then echo "IS_GZ=true" >> $GITHUB_ENV
+          elif echo "$CT" | grep -q "application/xml"; then echo "xml ok"
+          else echo "❌ Unexpected Content-Type" && exit 3; fi
+
+      - name: Ensure body has no <script> (non-gz only)
+        if: env.IS_GZ != 'true'
+        run: |
+          URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
+          BODY=$(curl -s "$URL")
+          if echo "$BODY" | grep -qi "<script"; then echo "❌ <script> found" && exit 4; fi
+          echo "✅ Body clean"
+
+      - name: Ping Google
+        run: |
+          export URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
+          python - <<'PY'
+import urllib.parse, os
+print("https://www.google.com/ping?sitemap="+urllib.parse.quote(os.environ['URL'], safe=''))
+PY
+          PING=$(python - <<'PY'
+import urllib.parse, os
+print("https://www.google.com/ping?sitemap="+urllib.parse.quote(os.environ['URL'], safe=''))
+PY
+)
+          curl -sS "$PING" >/dev/null || true
+          echo "✅ Ping sent"
+
+      - name: Redeploy via hook (on failure)
+        if: failure() && env.DEPLOY_HOOK_URL != ''
+        run: |
+          curl -sS -X POST "$DEPLOY_HOOK_URL" || true
