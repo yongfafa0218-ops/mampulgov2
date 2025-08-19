@@ -7,7 +7,7 @@ on:
     - cron: "0 0 * * *"   # 매일 00:00 UTC (KST 09:00)
   workflow_dispatch:
 
-# sitemap/robots 자동 커밋을 위해 write 권한 필요
+# 자동 커밋/푸시를 위해 Write 권한 필요
 permissions:
   contents: write
 
@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 원격 동기화를 위해 전체 히스토리 사용
 
       - name: Validate secrets
         run: |
@@ -34,13 +36,21 @@ jobs:
           : "${SITE_BASE:?Set SITE_BASE in repo secrets}"
           echo "SITEMAP_PATH=${SITEMAP_PATH:-/sitemap.xml}" >> $GITHUB_ENV
 
+      # ── 여기서 실제로 sitemap/robots를 자동 생성하고 커밋/푸시 ──
       - name: Auto-build sitemap.xml & robots.txt
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -e
           BASE="${SITE_BASE%/}"
           TODAY="$(date -u +%F)"
 
-          # 모든 공개 HTML 수집 (숨김/시스템 디렉터리 제외)
+          # 0) 현재 브랜치를 원격 최신으로 동기화 (push 거절 방지)
+          git fetch origin "$BRANCH"
+          git checkout "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+
+          # 1) 모든 공개 HTML 수집(숨김/시스템 디렉터리 제외)
           mapfile -t FILES < <(find . -type f -name '*.html' \
             -not -path './.git/*' -not -path './.github/*' -not -path './node_modules/*' | sort)
 
@@ -54,7 +64,7 @@ jobs:
             PAGES+="$f"$'\n'
           done
 
-          # sitemap.xml 생성
+          # 2) sitemap.xml 생성
           {
             echo '<?xml version="1.0" encoding="UTF-8"?>'
             echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -86,7 +96,7 @@ jobs:
             echo '</urlset>'
           } > sitemap.xml
 
-          # robots.txt 생성/갱신
+          # 3) robots.txt 생성/갱신
           {
             echo 'User-agent: *'
             echo 'Allow: /'
@@ -94,12 +104,12 @@ jobs:
             echo "Sitemap: $BASE/sitemap.xml"
           } > robots.txt
 
-          # 변경 사항 자동 커밋/푸시 ([skip ci]로 루프 방지)
+          # 4) 자동 커밋/푸시 ([skip ci]로 루프 방지)
           git add sitemap.xml robots.txt
           if ! git diff --cached --quiet; then
             git -c user.name='seo-agent' -c user.email='seo-agent@users.noreply.github.com' \
               commit -m "[seo-agent] Update sitemap/robots [skip ci]"
-            git push
+            git push origin "HEAD:$BRANCH"
           else
             echo "No changes to sitemap/robots."
           fi
@@ -108,7 +118,7 @@ jobs:
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
           echo "URL=$URL"
-          HEADERS=$(curl -sSIL "$URL")   # -L 따라가며 헤더 모두
+          HEADERS=$(curl -sSIL "$URL")   # -L: 리다이렉트 따라가며 헤더 수집
           echo "$HEADERS" > /tmp/headers.txt
 
           STATUS=$(awk '/^HTTP/{code=$2} END{print code}' /tmp/headers.txt)
@@ -118,7 +128,7 @@ jobs:
           echo "content-type=$CT"
 
           case "$STATUS" in
-            2*) : ;;  # 최종이 2xx면 통과
+            2*) : ;;  # 최종이 2xx면 OK
             *) echo "Non-2xx status: $STATUS"; exit 2 ;;
           esac
 
