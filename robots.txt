@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
 
+Sitemap: https://mampulgo2.vercel.app/sitemap_index.xml
 Sitemap: https://mampulgo2.vercel.app/sitemap.xml
