@@ -98,7 +98,7 @@ jobs:
             echo '</urlset>'
           } > sitemap.xml
 
-          # robots.txt 생성/갱신 (인덱스 포함)
+          # robots.txt (인덱스 포함)
           {
             echo 'User-agent: *'
             echo 'Allow: /'
@@ -168,17 +168,13 @@ jobs:
         shell: bash
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
-          ENCODED=$(python3 - <<'PY'
-import urllib.parse, os
-print(urllib.parse.quote(os.environ["URL"], safe=""))
-PY
-)
+          ENCODED=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['URL'], safe=''))")
           PING="https://www.google.com/ping?sitemap=${ENCODED}"
           echo "Ping => $PING"
           curl -sS "$PING" >/dev/null || true
 
       - name: Redeploy via hook (on failure)
-        if: "failure() && env.DEPLOY_HOOK_URL != ''"
+        if: ${{ failure() && env.DEPLOY_HOOK_URL != '' }}
         shell: bash
         run: |
           curl -sS -X POST "$DEPLOY_HOOK_URL" || true
