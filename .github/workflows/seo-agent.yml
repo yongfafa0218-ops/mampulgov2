@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, master ]
   schedule:
-    - cron: "0 0 * * *"      # 매일 00:00 UTC (KST 09:00)
+    - cron: "0 0 * * *"   # 매일 00:00 UTC (KST 09:00)
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,7 @@ jobs:
       SITE_BASE: ${{ secrets.SITE_BASE }}
       SITEMAP_PATH: ${{ secrets.SITEMAP_PATH }}
       DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+
     steps:
       - name: Validate secrets
         run: |
@@ -39,9 +40,9 @@ jobs:
           echo "status=$STATUS"
           echo "content-type=$CT"
           test "$STATUS" = "200"
-          if echo "$CT" | grep -q 'application/x-gzip'; then
+          if echo "$CT" | grep -qi 'application/x-gzip'; then
             echo "IS_GZ=true" >> $GITHUB_ENV
-          elif echo "$CT" | grep -q 'application/xml'; then
+          elif echo "$CT" | grep -Eqi 'application/xml|text/xml'; then
             echo "IS_GZ=false" >> $GITHUB_ENV
           else
             echo "Unexpected Content-Type: $CT"; exit 3
@@ -59,12 +60,9 @@ jobs:
 
       - name: Ping Google
         run: |
-          export URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
-          PING="https://www.google.com/ping?sitemap=$(python3 - <<'PY'
-import os, urllib.parse
-print(urllib.parse.quote(os.environ["URL"], safe=""))
-PY
-)"
+          URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
+          ENCODED=$(python3 -c "import urllib.parse;print(urllib.parse.quote('''${URL}''', safe=''))")
+          PING="https://www.google.com/ping?sitemap=${ENCODED}"
           echo "Ping => $PING"
           curl -sS "$PING" >/dev/null || true
           echo '✅ Ping sent'
