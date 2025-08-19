@@ -131,6 +131,7 @@ jobs:
       - name: Check headers (status & content-type)
         shell: bash
         run: |
+          set -e
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
           HEADERS=$(curl -sSIL "$URL")
           echo "$HEADERS" > /tmp/headers.txt
@@ -158,6 +159,7 @@ jobs:
         if: env.IS_GZ != 'true'
         shell: bash
         run: |
+          set -e
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
           BODY=$(curl -sS "$URL")
           if echo "$BODY" | grep -qi '<script'; then
@@ -167,8 +169,10 @@ jobs:
       - name: Ping Google
         shell: bash
         run: |
+          set -e
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
-          ENCODED=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['URL'], safe=''))")
+          # URL을 인자로 넘겨 안전하게 퍼센트 인코딩
+          ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$URL")
           PING="https://www.google.com/ping?sitemap=${ENCODED}"
           echo "Ping => $PING"
           curl -sS "$PING" >/dev/null || true
