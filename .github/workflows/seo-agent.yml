@@ -1,4 +1,4 @@
-name: SEO Agent (check → redeploy → ping)
+name: SEO Agent (auto-build → check → ping)
 
 on:
   push:
@@ -7,8 +7,9 @@ on:
     - cron: "0 0 * * *"   # 매일 00:00 UTC (KST 09:00)
   workflow_dispatch:
 
+# sitemap/robots 자동 커밋을 위해 write 권한 필요
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: seo-agent
@@ -17,37 +18,107 @@ concurrency:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       SITE_BASE: ${{ secrets.SITE_BASE }}
       SITEMAP_PATH: ${{ secrets.SITEMAP_PATH }}
       DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Validate secrets
         run: |
           set -e
           : "${SITE_BASE:?Set SITE_BASE in repo secrets}"
           echo "SITEMAP_PATH=${SITEMAP_PATH:-/sitemap.xml}" >> $GITHUB_ENV
 
+      - name: Auto-build sitemap.xml & robots.txt
+        run: |
+          set -e
+          BASE="${SITE_BASE%/}"
+          TODAY="$(date -u +%F)"
+
+          # 모든 공개 HTML 수집 (숨김/시스템 디렉터리 제외)
+          mapfile -t FILES < <(find . -type f -name '*.html' \
+            -not -path './.git/*' -not -path './.github/*' -not -path './node_modules/*' | sort)
+
+          # 제외 규칙: status.html, google*.html (검증/점검 페이지)
+          PAGES=""
+          for f in "${FILES[@]}"; do
+            base="$(basename "$f")"
+            case "$base" in
+              status.html|google*.html) continue ;;
+            esac
+            PAGES+="$f"$'\n'
+          done
+
+          # sitemap.xml 생성
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            IFS=$'\n'
+            for f in $PAGES; do
+              rel="${f#./}"
+              dir="$(dirname "$rel")"
+              base="$(basename "$rel")"
+
+              if [ "$base" = "index.html" ]; then
+                if [ "$dir" = "." ] || [ "$dir" = "/" ]; then
+                  loc="${BASE}/"
+                else
+                  loc="${BASE}/${dir}/"
+                fi
+                cf=weekly; pr=1.0
+              else
+                loc="${BASE}/${rel}"
+                cf=monthly; pr=0.8
+              fi
+
+              echo '  <url>'
+              echo "    <loc>$loc</loc>"
+              echo "    <lastmod>${TODAY}</lastmod>"
+              echo "    <changefreq>$cf</changefreq>"
+              echo "    <priority>$pr</priority>"
+              echo '  </url>'
+            done
+            echo '</urlset>'
+          } > sitemap.xml
+
+          # robots.txt 생성/갱신
+          {
+            echo 'User-agent: *'
+            echo 'Allow: /'
+            echo
+            echo "Sitemap: $BASE/sitemap.xml"
+          } > robots.txt
+
+          # 변경 사항 자동 커밋/푸시 ([skip ci]로 루프 방지)
+          git add sitemap.xml robots.txt
+          if ! git diff --cached --quiet; then
+            git -c user.name='seo-agent' -c user.email='seo-agent@users.noreply.github.com' \
+              commit -m "[seo-agent] Update sitemap/robots [skip ci]"
+            git push
+          else
+            echo "No changes to sitemap/robots."
+          fi
+
       - name: Check headers (status & content-type)
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
           echo "URL=$URL"
-          HEADERS=$(curl -sSIL "$URL")   # -L: 리다이렉트 따라가며 모든 응답 헤더 출력
+          HEADERS=$(curl -sSIL "$URL")   # -L 따라가며 헤더 모두
           echo "$HEADERS" > /tmp/headers.txt
 
-          # 마지막(최종) HTTP 상태코드만 추출
           STATUS=$(awk '/^HTTP/{code=$2} END{print code}' /tmp/headers.txt)
-
-          # 마지막(최종) Content-Type만 추출(소문자)
           CT=$(awk 'tolower($0) ~ /^content-type:/{line=$0} END{print line}' /tmp/headers.txt | awk -F': ' '{print tolower($2)}')
 
           echo "status=$STATUS"
           echo "content-type=$CT"
 
           case "$STATUS" in
-            2*) : ;;  # 최종이 2xx면 OK
+            2*) : ;;  # 최종이 2xx면 통과
             *) echo "Non-2xx status: $STATUS"; exit 2 ;;
           esac
 
