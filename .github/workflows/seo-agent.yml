@@ -34,12 +34,23 @@ jobs:
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
           echo "URL=$URL"
-          curl -sSIL "$URL" | tee /tmp/headers.txt
-          STATUS=$(awk 'NR==1{print $2}' /tmp/headers.txt)
-          CT=$(grep -i '^content-type:' /tmp/headers.txt | tr -d '\r' | tr 'A-Z' 'a-z' | awk -F': ' '{print $2}')
+          HEADERS=$(curl -sSIL "$URL")   # -L: 리다이렉트 따라가며 모든 응답 헤더 출력
+          echo "$HEADERS" > /tmp/headers.txt
+
+          # 마지막(최종) HTTP 상태코드만 추출
+          STATUS=$(awk '/^HTTP/{code=$2} END{print code}' /tmp/headers.txt)
+
+          # 마지막(최종) Content-Type만 추출(소문자)
+          CT=$(awk 'tolower($0) ~ /^content-type:/{line=$0} END{print line}' /tmp/headers.txt | awk -F': ' '{print tolower($2)}')
+
           echo "status=$STATUS"
           echo "content-type=$CT"
-          test "$STATUS" = "200"
+
+          case "$STATUS" in
+            2*) : ;;  # 최종이 2xx면 OK
+            *) echo "Non-2xx status: $STATUS"; exit 2 ;;
+          esac
+
           if echo "$CT" | grep -qi 'application/x-gzip'; then
             echo "IS_GZ=true" >> $GITHUB_ENV
           elif echo "$CT" | grep -Eqi 'application/xml|text/xml'; then
