@@ -1,8 +1,10 @@
-name: SEO Agent (auto-build → check → ping)
+name: SEO Agent (auto-build -> check -> ping)
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   schedule:
     - cron: "0 0 * * *"   # 매일 00:00 UTC (KST 09:00)
   workflow_dispatch:
@@ -30,12 +32,14 @@ jobs:
           fetch-depth: 0
 
       - name: Validate secrets
+        shell: bash
         run: |
           set -e
           : "${SITE_BASE:?Set SITE_BASE in repo secrets}"
           echo "SITEMAP_PATH=${SITEMAP_PATH:-/sitemap.xml}" >> $GITHUB_ENV
 
       - name: Auto-build sitemap.xml, sitemap_index.xml & robots.txt
+        shell: bash
         env:
           BRANCH: ${{ github.ref_name }}
         run: |
@@ -43,7 +47,7 @@ jobs:
           BASE="${SITE_BASE%/}"
           TODAY="$(date -u +%F)"
 
-          # 최신 원격으로 동기화(푸시 거절 방지)
+          # 원격 최신으로 동기화(푸시 거절 방지)
           git fetch origin "$BRANCH"
           git checkout "$BRANCH"
           git reset --hard "origin/$BRANCH"
@@ -94,7 +98,16 @@ jobs:
             echo '</urlset>'
           } > sitemap.xml
 
-          # 새 URL 강제 갱신용: sitemap_index.xml(인덱스) + 보조 사본(sitemap-alt.xml)
+          # robots.txt 생성/갱신 (인덱스 포함)
+          {
+            echo 'User-agent: *'
+            echo 'Allow: /'
+            echo
+            echo "Sitemap: $BASE/sitemap_index.xml"
+            echo "Sitemap: $BASE/sitemap.xml"
+          } > robots.txt
+
+          # sitemap_index.xml 생성
           {
             echo '<?xml version="1.0" encoding="UTF-8"?>'
             echo '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -104,19 +117,9 @@ jobs:
             echo '  </sitemap>'
             echo '</sitemapindex>'
           } > sitemap_index.xml
-          cp sitemap.xml sitemap-alt.xml
 
-          # robots.txt 갱신(두 줄 모두 허용 — 새 URL로 재제출 유도)
-          {
-            echo 'User-agent: *'
-            echo 'Allow: /'
-            echo
-            echo "Sitemap: $BASE/sitemap_index.xml"
-            echo "Sitemap: $BASE/sitemap.xml"
-          } > robots.txt
-
-          # 자동 커밋/푸시
-          git add sitemap.xml sitemap_index.xml sitemap-alt.xml robots.txt
+          # 자동 커밋/푸시 ([skip ci]로 루프 방지)
+          git add sitemap.xml sitemap_index.xml robots.txt
           if ! git diff --cached --quiet; then
             git -c user.name='seo-agent' -c user.email='seo-agent@users.noreply.github.com' \
               commit -m "[seo-agent] Update sitemap(s)/robots [skip ci]"
@@ -126,9 +129,9 @@ jobs:
           fi
 
       - name: Check headers (status & content-type)
+        shell: bash
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
-          echo "URL=$URL"
           HEADERS=$(curl -sSIL "$URL")
           echo "$HEADERS" > /tmp/headers.txt
 
@@ -153,22 +156,29 @@ jobs:
 
       - name: Ensure body has no <script> (non-gzip)
         if: env.IS_GZ != 'true'
+        shell: bash
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
           BODY=$(curl -sS "$URL")
           if echo "$BODY" | grep -qi '<script'; then
             echo 'Found <script> in sitemap'; exit 4
           fi
-          echo '✅ Body clean'
 
       - name: Ping Google
+        shell: bash
         run: |
           URL="${SITE_BASE}${SITEMAP_PATH:-/sitemap.xml}"
-          ENCODED=$(python3 -c "import urllib.parse;print(urllib.parse.quote('''${URL}''', safe=''))")
+          ENCODED=$(python3 - <<'PY'
+import urllib.parse, os
+print(urllib.parse.quote(os.environ["URL"], safe=""))
+PY
+)
           PING="https://www.google.com/ping?sitemap=${ENCODED}"
           echo "Ping => $PING"
           curl -sS "$PING" >/dev/null || true
-          echo '✅ Ping sent'
 
       - name: Redeploy via hook (on failure)
-        if: fail
+        if: "failure() && env.DEPLOY_HOOK_URL != ''"
+        shell: bash
+        run: |
+          curl -sS -X POST "$DEPLOY_HOOK_URL" || true
